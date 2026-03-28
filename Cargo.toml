@@ -1,0 +1,16 @@
+[package]
+name = "calendastro"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+time = { version = "0.3", features = ["local-offset"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = 0
+panic = "abort"
