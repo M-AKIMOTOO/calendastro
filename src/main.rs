@@ -1,4 +1,4 @@
-use eframe::egui::{self, Align, Color32, RichText, TextEdit, Vec2};
+use eframe::egui::{self, Align, Color32, RichText, Stroke, TextEdit, Vec2};
 use std::time::Duration;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -46,7 +46,7 @@ impl eframe::App for CalendarApp {
         ctx.request_repaint_after(Duration::from_secs(1));
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let (jst_text, utc_text) = current_clock_strings();
+            let ((jst_text, jst_today), (utc_text, utc_today)) = current_clock_and_dates();
             let controls_font = 15.0;
 
             ui.add_space(8.0);
@@ -78,7 +78,7 @@ impl eframe::App for CalendarApp {
                     )
                     .clicked()
                 {
-                    let (year, month, _) = today_ymd();
+                    let (year, month, _) = jst_today;
                     self.set_month(year, month);
                 }
                 if ui
@@ -119,7 +119,7 @@ impl eframe::App for CalendarApp {
             }
 
             ui.add_space(10.0);
-            self.draw_calendar(ui);
+            self.draw_calendar(ui, jst_today, utc_today);
         });
     }
 }
@@ -155,13 +155,15 @@ impl CalendarApp {
         }
     }
 
-    fn draw_calendar(&self, ui: &mut egui::Ui) {
+    fn draw_calendar(&self, ui: &mut egui::Ui, jst_today: (i32, u32, u32), utc_today: (i32, u32, u32)) {
         let first_weekday = weekday_index(self.year, self.month, 1);
         let days = days_in_month(self.year, self.month);
         let mut day = 1_u32;
         let available = ui.available_size();
         let cell_width = ((available.x - 12.0) / 7.0).clamp(64.0, 120.0);
         let cell_height = ((available.y - 64.0) / 6.0).clamp(48.0, 85.0);
+        let jst_border = Color32::from_rgb(245, 215, 70);
+        let utc_border = Color32::from_rgb(80, 220, 235);
 
         egui::Grid::new("calendar_header")
             .num_columns(7)
@@ -206,26 +208,34 @@ impl CalendarApp {
                             6 => Color32::from_rgb(185, 50, 50),
                             _ => ui.visuals().text_color(),
                         };
+                        let ymd = (self.year, self.month, day);
+                        let is_jst_today = ymd == jst_today;
+                        let is_utc_today = ymd == utc_today;
 
-                        egui::Frame::group(ui.style())
-                            .inner_margin(egui::Margin::same(6))
-                            .show(ui, |ui| {
-                                ui.set_min_size(Vec2::new(cell_width, cell_height));
-                                ui.with_layout(egui::Layout::top_down(Align::Min), |ui| {
-                                    ui.label(
-                                        RichText::new(format!("{:02}", info.day))
-                                            .size(26.0)
-                                            .strong()
-                                            .color(weekday_color),
+                        if is_jst_today && is_utc_today {
+                            egui::Frame::default()
+                                .stroke(Stroke::new(2.0, jst_border))
+                                .inner_margin(egui::Margin::same(1))
+                                .show(ui, |ui| {
+                                    draw_day_cell(
+                                        ui,
+                                        cell_width,
+                                        cell_height,
+                                        &info,
+                                        weekday_color,
+                                        Some(utc_border),
                                     );
-                                    ui.add_space(6.0);
-                                    ui.label(
-                                        RichText::new(format!("DOY {}", info.day_of_year))
-                                            .size(18.0),
-                                    );
-                                    ui.label(RichText::new(format!("MJD {}", info.mjd)).size(18.0));
                                 });
-                            });
+                        } else {
+                            let border_color = if is_jst_today {
+                                Some(jst_border)
+                            } else if is_utc_today {
+                                Some(utc_border)
+                            } else {
+                                None
+                            };
+                            draw_day_cell(ui, cell_width, cell_height, &info, weekday_color, border_color);
+                        }
 
                         day += 1;
                     }
@@ -256,12 +266,12 @@ fn today_ymd() -> (i32, u32, u32) {
     (now.year(), now.month() as u32, now.day().into())
 }
 
-fn current_clock_strings() -> (String, String) {
+fn current_clock_and_dates() -> ((String, (i32, u32, u32)), (String, (i32, u32, u32))) {
     let utc_now = OffsetDateTime::now_utc();
     let jst_now = utc_now.to_offset(UtcOffset::from_hms(9, 0, 0).expect("valid JST offset"));
     (
-        format_clock(jst_now, Some("JST")),
-        format_clock(utc_now, Some("UT")),
+        (format_clock(jst_now, Some("JST")), datetime_ymd(jst_now)),
+        (format_clock(utc_now, Some("UT")), datetime_ymd(utc_now)),
     )
 }
 
@@ -280,6 +290,39 @@ fn format_clock(datetime: OffsetDateTime, suffix: Option<&str>) -> String {
         Some(suffix) => format!("{base} {suffix}"),
         None => base,
     }
+}
+
+fn datetime_ymd(datetime: OffsetDateTime) -> (i32, u32, u32) {
+    (datetime.year(), datetime.month() as u32, datetime.day().into())
+}
+
+fn draw_day_cell(
+    ui: &mut egui::Ui,
+    cell_width: f32,
+    cell_height: f32,
+    info: &DayInfo,
+    weekday_color: Color32,
+    border_color: Option<Color32>,
+) {
+    let mut frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(6));
+    if let Some(border_color) = border_color {
+        frame = frame.stroke(Stroke::new(2.0, border_color));
+    }
+
+    frame.show(ui, |ui| {
+        ui.set_min_size(Vec2::new(cell_width, cell_height));
+        ui.with_layout(egui::Layout::top_down(Align::Min), |ui| {
+            ui.label(
+                RichText::new(format!("{:02}", info.day))
+                    .size(26.0)
+                    .strong()
+                    .color(weekday_color),
+            );
+            ui.add_space(6.0);
+            ui.label(RichText::new(format!("DOY {}", info.day_of_year)).size(18.0));
+            ui.label(RichText::new(format!("MJD {}", info.mjd)).size(18.0));
+        });
+    });
 }
 
 fn gregorian_to_mjd(year: i32, month: u32, day: u32) -> i64 {
